@@ -10,3 +10,8 @@ env/
 *.tmp
 ~$*.docx
 Thumbs.db
+
+# Generated report and presentation deliverables are kept locally, not in GitHub.
+NLP_Mini_Project_1_*.docx
+NLP_Mini_Project_1_*.pdf
+NLP_Mini_Project_1_*.pptx
