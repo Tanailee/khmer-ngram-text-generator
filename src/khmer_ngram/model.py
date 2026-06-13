@@ -249,6 +249,118 @@ def top_next_words(model, seed_text: str, vocab: set[str], limit: int = 10):
     return sorted(rows, key=lambda item: item[1], reverse=True)[:limit]
 
 
+def seed_context(seed_text: str, vocab: set[str], n: int = 4) -> tuple[str, ...]:
+    seed = replace_unk(tokenize_seed(seed_text), vocab)
+    return tuple((["<s>"] * (n - 1) + seed)[-(n - 1) :])
+
+
+def explain_lm1_prediction(model: BackoffLM, seed_text: str, vocab: set[str], candidate_word: str | None = None):
+    context = seed_context(seed_text, vocab, model.max_order)
+    if candidate_word is None:
+        candidate_word = top_next_words(model, seed_text, vocab, limit=1)[0][0]
+    candidate_word = candidate_word if candidate_word in vocab else "<UNK>"
+
+    rows = []
+    selected_order = None
+    final_probability = 0.0
+    for order in range(min(model.max_order, len(context) + 1), 1, -1):
+        current_context = context[-(order - 1) :]
+        gram = current_context + (candidate_word,)
+        count_value = model.counts[order].get(gram, 0)
+        context_count = model.context_counts[order].get(current_context, 0)
+        probability = count_value / context_count if context_count else 0.0
+        used = selected_order is None and count_value > 0 and context_count > 0
+        if used:
+            selected_order = order
+            final_probability = probability
+        rows.append(
+            {
+                "Order checked": f"{order}-gram",
+                "Context used": " ".join(current_context),
+                "N-gram checked": " ".join(gram),
+                "Count": count_value,
+                "Context count": context_count,
+                "Probability": probability,
+                "Used by LM1": "YES" if used else "NO",
+            }
+        )
+
+    unigram_count = model.counts[1].get((candidate_word,), 0)
+    unigram_probability = unigram_count / model.unigram_total if model.unigram_total else 0.0
+    used_unigram = selected_order is None
+    if used_unigram:
+        selected_order = 1
+        final_probability = unigram_probability
+    rows.append(
+        {
+            "Order checked": "1-gram",
+            "Context used": "(overall corpus)",
+            "N-gram checked": candidate_word,
+            "Count": unigram_count,
+            "Context count": model.unigram_total,
+            "Probability": unigram_probability,
+            "Used by LM1": "YES" if used_unigram else "NO",
+        }
+    )
+    return {
+        "context": context,
+        "candidate_word": candidate_word,
+        "selected_order": selected_order,
+        "final_probability": final_probability,
+        "rows": rows,
+    }
+
+
+def explain_lm2_prediction(model: InterpolationLM, seed_text: str, vocab: set[str], candidate_word: str | None = None):
+    context = seed_context(seed_text, vocab, model.max_order)
+    if candidate_word is None:
+        candidate_word = top_next_words(model, seed_text, vocab, limit=1)[0][0]
+    candidate_word = candidate_word if candidate_word in vocab else "<UNK>"
+
+    vocab_n = len(model.vocab)
+    rows = []
+    final_probability = 0.0
+    for order in range(1, model.max_order + 1):
+        lambda_value = model.lambdas[order - 1]
+        if order == 1:
+            count_value = model.counts[1].get((candidate_word,), 0)
+            context_count = model.unigram_total
+            denominator = model.unigram_total + model.k * vocab_n
+            probability = (count_value + model.k) / denominator if denominator else 0.0
+            context_used = "(overall corpus)"
+            gram_checked = candidate_word
+        else:
+            current_context = context[-(order - 1) :]
+            gram = current_context + (candidate_word,)
+            count_value = model.counts[order].get(gram, 0)
+            context_count = model.context_counts[order].get(current_context, 0)
+            denominator = context_count + model.k * vocab_n
+            probability = (count_value + model.k) / denominator if denominator else 0.0
+            context_used = " ".join(current_context)
+            gram_checked = " ".join(gram)
+        contribution = lambda_value * probability
+        final_probability += contribution
+        rows.append(
+            {
+                "Order": f"{order}-gram",
+                "Context used": context_used,
+                "N-gram checked": gram_checked,
+                "Count": count_value,
+                "Context count": context_count,
+                "k": model.k,
+                "Probability": probability,
+                "Lambda": lambda_value,
+                "Lambda × Probability": contribution,
+            }
+        )
+    return {
+        "context": context,
+        "candidate_word": candidate_word,
+        "final_probability": final_probability,
+        "rows": rows,
+    }
+
+
 def tune_interpolation(
     train: list[str],
     valid: list[str],
@@ -286,6 +398,10 @@ def tune_interpolation(
 
 def build_artifacts(corpus_path: Path, vocab_cap: int = 500) -> NgramArtifacts:
     raw_text = corpus_path.read_text(encoding="utf-8")
+    return build_artifacts_from_text(raw_text, vocab_cap=vocab_cap)
+
+
+def build_artifacts_from_text(raw_text: str, vocab_cap: int = 500) -> NgramArtifacts:
     tokens = tokenize(raw_text)
     train_raw, valid_raw, test_raw = split_tokens(tokens)
     vocab_size = min(vocab_cap, max(50, len(set(train_raw))))
@@ -324,4 +440,3 @@ def build_artifacts(corpus_path: Path, vocab_cap: int = 500) -> NgramArtifacts:
         tokenizer_name="khmernltk.word_tokenize" if KHMER_TOKENIZER_AVAILABLE else "Python split() fallback",
         vocab_size=len(vocab),
     )
-

@@ -22,11 +22,15 @@ The app supports:
 
 - Khmer seed-based text generation
 - LM1 Backoff vs LM2 Interpolation selection
+- custom Khmer `.txt` corpus upload and retraining
 - raw output with `<UNK>`
 - clean readable output
 - top next-token probability table
+- detailed LM1/LM2 prediction explanation tables
+- vocabulary and rare-word explorer
 - model perplexity comparison
 - vocabulary cap control
+- CSV/TXT exports for generated output, probabilities, summaries, and vocabulary tables
 
 ## Project Results
 
@@ -126,4 +130,3 @@ This is a transparent classical NLP baseline for Khmer autocomplete-style text g
 - teaching perplexity evaluation
 
 It should not be presented as a modern semantic chatbot. A production-grade system would require a much larger Khmer corpus, stronger segmentation validation, and comparison with neural language models.
-
